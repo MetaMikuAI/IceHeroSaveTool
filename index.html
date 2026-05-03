@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IceHero SaveTool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  font-family:'Noto Sans SC','Noto Sans SC','PingFang SC','Microsoft YaHei',sans-serif;
+  min-height:100vh;color:#705324;
+  background:#fbf8f3 url('mystia.png') center/cover no-repeat fixed;
+  background-blend-mode:overlay;
+  image-rendering:pixelated;
+}
+.container{max-width:640px;margin:0 auto;padding:32px 20px}
+h1{text-align:center;font-size:1.5rem;font-weight:700;margin-bottom:4px;color:#705324}
+.subtitle{text-align:center;font-size:.8rem;color:#be8c3c;margin-bottom:28px}
+.subtitle a{color:#9f7532;text-decoration:none;border-bottom:1px dotted #d7b681}
+.subtitle a:hover{color:#705324}
+.card{
+  background:rgba(248,242,232,.88);backdrop-filter:blur(12px);
+  border:1px solid #e9d7b9;border-radius:12px;padding:24px;margin-bottom:20px;
+  transition:border-color .2s;
+}
+.card:hover{border-color:#d7b681}
+.card h2{font-size:1rem;font-weight:600;margin-bottom:6px;color:#705324}
+.card p{font-size:.82rem;color:#9f7532;margin-bottom:16px;line-height:1.5}
+.drop-zone{
+  border:2px dashed #e2c9a2;border-radius:8px;padding:28px 16px;text-align:center;
+  cursor:pointer;transition:all .2s;position:relative;
+}
+.drop-zone:hover,.drop-zone.drag-over{border-color:#d7b681;background:rgba(215,182,129,.08)}
+.drop-zone input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.drop-zone .icon{font-size:1.6rem;margin-bottom:4px}
+.drop-zone .label{font-size:.82rem;color:#be8c3c}
+.drop-zone .label b{color:#705324}
+.status{
+  margin-top:12px;padding:10px 14px;border-radius:8px;font-size:.8rem;line-height:1.5;
+  display:none;word-break:break-all;
+}
+.status.ok{display:block;background:rgba(133,178,108,.15);color:#5a8a3c;border:1px solid rgba(133,178,108,.3)}
+.status.err{display:block;background:rgba(236,154,161,.15);color:#a8444c;border:1px solid rgba(236,154,161,.3)}
+footer{text-align:center;padding:20px 0;font-size:.75rem;color:#be8c3c}
+footer a{color:#9f7532;text-decoration:none}
+footer a:hover{color:#705324}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>IceHero SaveTool</h1>
+  <p class="subtitle">
+    <a href="https://store.steampowered.com/app/1955830" target="_blank">Touhou Hero of Ice Fairy</a>
+    &nbsp;·&nbsp;
+    <a href="https://github.com/MetaMikuAI/IceHeroSaveTool" target="_blank">GitHub: MetaMikuAI/IceHeroSaveTool</a>
+  </p>
+
+  <div class="card">
+    <h2>解密存档</h2>
+    <p>上传加密存档文件进行解密。</p>
+    <div class="drop-zone" id="dz-decrypt">
+      <input type="file" id="file-decrypt">
+      <div class="icon">📂</div>
+      <div class="label">拖拽或 <b>点击上传</b> 加密存档</div>
+    </div>
+    <div class="status" id="st-decrypt"></div>
+  </div>
+
+  <div class="card">
+    <h2>加密存档</h2>
+    <p>上传原始存档文件进行加密。</p>
+    <div class="drop-zone" id="dz-encrypt">
+      <input type="file" id="file-encrypt">
+      <div class="icon">📂</div>
+      <div class="label">拖拽或 <b>点击上传</b> 原始文件</div>
+    </div>
+    <div class="status" id="st-encrypt"></div>
+  </div>
+
+  <footer>
+    <a href="https://github.com/MetaMikuAI/IceHeroSaveTool" target="_blank">MetaMikuAI/IceHeroSaveTool</a>
+  </footer>
+</div>
+
+<script>
+const KEY_HEX = '71EDE0214C23B1377EFF2FA836946C1F3ABECE72F968AA91536775882D855ABF';
+const IV_HEX  = '4646F88EF532FF27BB09DEE4F3D41081';
+const MAGIC   = new TextEncoder().encode('AESEncrypt');
+
+function hexToBytes(hex) {
+  const b = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < b.length; i++) b[i] = parseInt(hex.substr(i * 2, 2), 16);
+  return b;
+}
+
+async function getKey() {
+  return crypto.subtle.importKey('raw', hexToBytes(KEY_HEX), 'AES-CBC', false, ['encrypt', 'decrypt']);
+}
+
+function eq(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+function show(id, msg, ok) {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.className = 'status ' + (ok ? 'ok' : 'err');
+}
+
+function download(data, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([data]));
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+document.getElementById('file-decrypt').addEventListener('change', async function() {
+  const file = this.files[0]; if (!file) return;
+  try {
+    const buf = new Uint8Array(await file.arrayBuffer());
+    if (buf.length < 10 || !eq(buf.slice(0, 10), MAGIC)) {
+      show('st-decrypt', '无效存档：文件头不是 AESEncrypt', false); return;
+    }
+    const key = await getKey();
+    const plain = new Uint8Array(await crypto.subtle.decrypt(
+      { name: 'AES-CBC', iv: hexToBytes(IV_HEX) }, key, buf.slice(10)
+    ));
+    download(plain, file.name);
+    show('st-decrypt', '解密成功！文件已下载。', true);
+  } catch (e) {
+    show('st-decrypt', '解密失败：' + e.message, false);
+  }
+  this.value = '';
+});
+
+document.getElementById('file-encrypt').addEventListener('change', async function() {
+  const file = this.files[0]; if (!file) return;
+  try {
+    const plain = new Uint8Array(await file.arrayBuffer());
+    const key = await getKey();
+    const enc = new Uint8Array(await crypto.subtle.encrypt(
+      { name: 'AES-CBC', iv: hexToBytes(IV_HEX) }, key, plain
+    ));
+    const out = new Uint8Array(10 + enc.length);
+    out.set(MAGIC, 0);
+    out.set(enc, 10);
+    download(out, file.name);
+    show('st-encrypt', '加密成功！文件已下载。', true);
+  } catch (e) {
+    show('st-encrypt', '加密失败：' + e.message, false);
+  }
+  this.value = '';
+});
+
+// drag-over visual
+document.querySelectorAll('.drop-zone').forEach(z => {
+  z.addEventListener('dragover', e => { e.preventDefault(); z.classList.add('drag-over'); });
+  z.addEventListener('dragleave', () => z.classList.remove('drag-over'));
+  z.addEventListener('drop', () => z.classList.remove('drag-over'));
+});
+</script>
+</body>
+</html>
